@@ -20,6 +20,7 @@ struct PlanView: View {
                        topBackground: liquidScaffoldSky()) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
                 if let a = advice {
+                    heroCard(a)
                     todayCard(a)
                     mealsCard(a)
                     bodyCard(a)
@@ -42,6 +43,40 @@ struct PlanView: View {
         loading = true
         advice = await PlanPublisher.publish(from: model)
         loading = false
+    }
+
+    // MARK: Hero
+
+    /// The same liquid gauge trio as Today's Charge / Effort / Rest: recovery, last night's sleep and the
+    /// share of the way from the start weight to the goal.
+    private func heroCard(_ a: PlanAdvice) -> some View {
+        let goalShare: Double? = a.weightAvg7.map { avg in
+            max(0, min(100, (FitnessPlan.startWeightKg - avg)
+                / (FitnessPlan.startWeightKg - FitnessPlan.goalWeightKg) * 100))
+        }
+        return NoopCard {
+            HStack(alignment: .top, spacing: 0) {
+                heroGauge("Recovery", score: a.recovery,
+                          tint: a.recovery.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.chargeColor)
+                heroGauge("Schlaf h", score: a.sleepHours, tint: StrandPalette.restColor,
+                          maxValue: 9, decimals: 1)
+                heroGauge("Ziel %", score: goalShare, tint: StrandPalette.effortColor)
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func heroGauge(_ label: String, score: Double?, tint: Color,
+                           maxValue: Double = 100, decimals: Int = 0) -> some View {
+        VStack(spacing: 7) {
+            LiquidScoreGauge(score: score, tint: tint, diameter: 88, animated: true,
+                             maxValue: maxValue, decimals: decimals)
+            Text(label.uppercased())
+                .font(StrandFont.overline).tracking(1.6)
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .foregroundStyle(StrandPalette.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: Today
@@ -115,10 +150,10 @@ struct PlanView: View {
         NoopCard {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Essen").strandOverline()
-                mealRow("Frühstück", a.breakfast)
-                mealRow("Snack", a.snack)
-                mealRow("Mittag", a.lunch)
-                mealRow("Abend", a.dinner)
+                mealRow("Frühstück", a.breakfast, icon: "sunrise.fill", tint: StrandPalette.statusWarning)
+                mealRow("Snack", a.snack, icon: "cup.and.saucer.fill", tint: StrandPalette.effortColor)
+                mealRow("Mittag", a.lunch, icon: "sun.max.fill", tint: StrandPalette.chargeColor)
+                mealRow("Abend", a.dinner, icon: "moon.stars.fill", tint: StrandPalette.restColor)
                 divider
                 HStack(spacing: 16) {
                     metric("Kalorien", "\(a.kcalTarget)")
@@ -132,11 +167,18 @@ struct PlanView: View {
         }
     }
 
-    private func mealRow(_ label: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
-            Text(text).font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
+    private func mealRow(_ label: String, _ text: String, icon: String, tint: Color) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(tint.opacity(0.18)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label).font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
+                Text(text).font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
