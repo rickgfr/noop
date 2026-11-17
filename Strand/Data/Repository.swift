@@ -210,6 +210,10 @@ final class Repository: ObservableObject {
     @Published private(set) var hydrationSeq = 0
     func noteHydrationChanged() { hydrationSeq += 1 }
 
+    /// Personal fork: a Withings scale write lands in `metricSeries` only, which `refresh()` does not
+    /// diff, so nudge the views keyed on `refreshSeq` (Today's weight tile) to re-read.
+    func noteBodyDataChanged() { refreshSeq += 1 }
+
     /// Bumped whenever a period-start row is logged or removed. Cycle surfaces use this lightweight
     /// signal to reload their sensitive local history without forcing a full strap-data refresh.
     @Published private(set) var cycleTrackingSeq = 0

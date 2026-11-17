@@ -299,6 +299,8 @@ targets:
           # the re-score task, which is submitted only when a re-score is OWED, and a missing strap owes
           # none, so that task would never run in the one case the warning exists for.
           - $(PRODUCT_BUNDLE_IDENTIFIER).stalebattery
+          # Personal fork: early-morning Plan refresh so the 07:00 message reflects last night.
+          - $(PRODUCT_BUNDLE_IDENTIFIER).plan
         NSBluetoothAlwaysUsageDescription: "NOOP connects directly to your WHOOP strap over Bluetooth to read heart rate, R-R intervals, battery, and sensor data locally on your iPhone. Nothing leaves your device."
         NSLocationWhenInUseUsageDescription: "NOOP records your route during an outdoor workout to show distance, pace, and a map, and keeps recording while the screen is off. The route stays on your device. Nothing leaves it."
         NSHealthShareUsageDescription: "NOOP reads your own Apple Health data on-device to compute recovery, strain, and sleep. Nothing leaves your device."

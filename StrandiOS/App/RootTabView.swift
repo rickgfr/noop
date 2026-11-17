@@ -137,6 +137,9 @@ struct RootTabView: View {
             // position across a flip instead of inheriting Coach's.
             if coachEnabled {
                 tab(CoachView(), "Coach", "sparkles", path: $tabPaths[3], scrollSignal: scrollTop[3]).tag(3)
+            } else {
+                // Personal fork: the Plan tab takes the Coach slot while Coach is off (no API key needed).
+                tab(PlanView(), "Plan", "list.bullet.clipboard", path: $tabPaths[3], scrollSignal: scrollTop[3]).tag(3)
             }
             moreTab(path: $tabPaths[4], scrollSignal: scrollTop[4]).tag(4)
         }
@@ -145,7 +148,7 @@ struct RootTabView: View {
         // any more, which renders as an empty tab rather than as an error. Send that wearer to Today, and
         // only in that case, so a flip made from anywhere else does not move them.
         .onChangeCompat(of: coachEnabled) { enabled in
-            if !enabled && selectedTab == 3 { selectedTab = 0 }
+            if !enabled && selectedTab == 3 { tabPaths[3] = NavigationPath() }
         }
         // #1841: the same "Hide bar when scrolling" preference Android drives its own bar with. Here the
         // system owns the behaviour — iOS 26's tab bar MINIMISES to a pill on scroll down rather than
@@ -472,6 +475,7 @@ struct RootTabView: View {
                     MoreRow("Compare", "rectangle.split.2x1.fill", .compare)
                 }
                 moreSection("Body") {
+                    MoreRow("Plan", "list.bullet.clipboard", .plan)
                     MoreRow("Live", "waveform.path.ecg", .live)
                     MoreRow("Workouts", "figure.run", .workouts)
                     MoreRow("Lift Log", "dumbbell.fill", .liftLog)
@@ -601,9 +605,11 @@ private enum MoreDestination: Hashable {
     case live, workouts, liftLog, health, labBook, stress, breathe, intervals, rhythm
     case fusedRecord, appleHealth, miBand, dataSources, backupSync, shortcutsExport, noopLimitations
     case alarms, automations, testCentre, siriShortcuts, powerSaving, settings
+    case plan
 
     @ViewBuilder var destination: some View {
         switch self {
+        case .plan:            PlanView()
         case .insightsHub:     InsightsHubView()
         case .intelligence:    IntelligenceView()
         case .coach:           CoachView()

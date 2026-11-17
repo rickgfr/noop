@@ -149,6 +149,13 @@ struct StrandiOSApp: App {
             await model?.checkStrapNotSeen()
         })
         StaleBatteryBackgroundScheduler.schedule()
+        // Personal fork: Plan tab morning refresh (≈06:15) feeding the 07:00 notification + Plan widget.
+        PlanBackgroundScheduler.register(perform: { [weak model] in
+            guard let model else { return }
+            await model.repo.refresh()
+            await PlanPublisher.publish(from: model)
+        })
+        PlanBackgroundScheduler.schedule()
         let bridge = HealthKitBridge(
             repo: model.repo,
             appleDeviceId: model.appleDeviceId,
@@ -273,7 +280,10 @@ struct StrandiOSApp: App {
                 // by the .active republish on return.
                 .onReceive(model.repo.$refreshSeq.dropFirst()) { _ in
                     guard scenePhase == .active else { return }
-                    Task { await WidgetSnapshot.publish(from: model) }
+                    Task {
+                        await WidgetSnapshot.publish(from: model)
+                        await PlanPublisher.publish(from: model)
+                    }
                     // The watch rides the same active-only hook because the bridge now SELF-THROTTLES
                     // (30-minute spacing + headline-change dedup, both must pass, see WatchSessionBridge),
                     // so a refresh storm can't burn the ~50/day complication transfer budget.
@@ -386,6 +396,7 @@ struct StrandiOSApp: App {
                         }
                     )
                     await WidgetSnapshot.publish(from: model)
+                    await PlanPublisher.publish(from: model)
                     // Push the wrist on the SAME refresh as the Home-screen widget so the watch, the
                     // widget and Today never disagree about which day they describe. Without this the
                     // watch only ever holds placeholder data on a real device.
@@ -405,7 +416,7 @@ struct StrandiOSApp: App {
                 // #114: capture the LAST in-app live state on the way out so the Home widget matches what
                 // the user just saw — its battery/HR/score otherwise lag to the last FOREGROUND refreshSeq
                 // bump. One reload per app-exit is low-frequency and well within WidgetKit's daily budget.
-                Task { await WidgetSnapshot.publish(from: model) }
+                Task { await WidgetSnapshot.publish(from: model); await PlanPublisher.publish(from: model); PlanBackgroundScheduler.schedule() }
                 // #155: refresh the Documents/noop_sync.txt drop file the user's Siri Shortcut logs
                 // into Apple Health. Gated inside writeIfEnabled on the opt-in default (OFF) — a
                 // no-op until the user turns on Shortcuts Export.

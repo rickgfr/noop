@@ -1,0 +1,58 @@
+# Personal fork: build the iPhone app (unsigned .ipa for AltStore / SideStore / Sideloadly) on every push
+# to the `rick-plan` branch, and publish it to the rolling `rick-latest` prerelease. No secrets needed.
+name: Rick iOS build
+
+on:
+  push:
+    branches: [rick-plan]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rick-ios
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build NOOPiOS for device (unsigned, Release)
+        run: >-
+          set -o pipefail &&
+          xcodebuild -scheme NOOPiOS -configuration Release -destination 'generic/platform=iOS'
+          -derivedDataPath build/dd
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+          build 2>&1 | tee build.log | grep -E "error:|warning: .*Plan|BUILD (SUCCEEDED|FAILED)" || true;
+          grep -q "BUILD SUCCEEDED" build.log
+      - name: Show compiler errors
+        if: failure()
+        run: grep -E "error:" -A3 build.log | head -200 || true
+      - name: Package sideload .ipa
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APP=$(find build/dd/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -type d | head -1)
+          test -n "$APP" || { echo ".app (iphoneos) not found"; exit 1; }
+          rm -rf "$APP/Watch"
+          test -d "$APP/PlugIns/NOOPWidgets.appex" || { echo "NOOPWidgets.appex missing"; exit 1; }
+          Tools/prepare-ios-sideload-app.sh "$APP"
+          rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
+          zip -qr NOOP-rick.ipa Payload
+          gh release view rick-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create rick-latest --repo "$GITHUB_REPOSITORY" --prerelease \
+              --title "NOOP Rick (Plan + Withings)" --notes "Unsigned iPhone build with Plan tab, Withings sync and Plan widget. Install with AltStore/SideStore or Sideloadly." \
+              --target "$GITHUB_SHA"
+          gh release upload rick-latest NOOP-rick.ipa --repo "$GITHUB_REPOSITORY" --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NOOP-rick-ipa
+          path: NOOP-rick.ipa
+          retention-days: 14
