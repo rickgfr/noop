@@ -21,8 +21,10 @@ struct PlanView: View {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
                 if let a = advice {
                     heroCard(a)
-                    todayCard(a)
-                    mealsCard(a)
+                    NavigationLink { TrainingView(advice: a) } label: { todayCard(a) }
+                        .buttonStyle(.plain)
+                    NavigationLink { FoodView(advice: a) } label: { mealsCard(a) }
+                        .buttonStyle(.plain)
                     bodyCard(a)
                 } else {
                     NoopCard {
@@ -37,6 +39,30 @@ struct PlanView: View {
             }
         }
         .task(id: repo.refreshSeq) { await reload() }
+        .onAppear { refreshLogs() }
+    }
+
+    @State private var eatenToday = 0
+    @State private var proteinToday = 0
+    @State private var loggedSlots: Set<MealSlot> = []
+    @State private var trainingDone: [String: ExerciseLog] = [:]
+
+    /// Re-read the food and training logs when coming back from the tracker / training screens.
+    private func refreshLogs() {
+        let key = FitnessPlan.dayKey(Date())
+        let entries = FoodLogStore.entries(day: key)
+        eatenToday = entries.reduce(0) { $0 + $1.kcal }
+        proteinToday = entries.reduce(0) { $0 + $1.protein }
+        loggedSlots = Set(entries.map(\.slot))
+        trainingDone = TrainingLogStore.day(key)
+    }
+
+    private func chevronHint(_ text: String) -> some View {
+        HStack(spacing: 4) {
+            Text(text).font(StrandFont.caption.weight(.semibold))
+            Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
+        }
+        .foregroundStyle(StrandPalette.accent)
     }
 
     private func reload() async {
@@ -99,11 +125,20 @@ struct PlanView: View {
                 divider
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(a.exercises, id: \.self) { ex in
+                        let p = ParsedExercise(ex)
+                        let done = (trainingDone[p.name]?.setsDone ?? 0) >= p.sets
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Circle().fill(StrandPalette.accent).frame(width: 5, height: 5)
+                            Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 13))
+                                .foregroundStyle(done ? StrandPalette.statusPositive : StrandPalette.textTertiary)
                             Text(ex).font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
+                                .strikethrough(done, color: StrandPalette.textTertiary)
                         }
                     }
+                }
+                HStack {
+                    Spacer()
+                    chevronHint("Training starten")
                 }
                 if !a.notes.isEmpty {
                     divider
@@ -149,16 +184,39 @@ struct PlanView: View {
     private func mealsCard(_ a: PlanAdvice) -> some View {
         NoopCard {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Essen").strandOverline()
-                mealRow("Frühstück", a.breakfast, icon: "sunrise.fill", tint: StrandPalette.statusWarning)
-                mealRow("Snack", a.snack, icon: "cup.and.saucer.fill", tint: StrandPalette.effortColor)
-                mealRow("Mittag", a.lunch, icon: "sun.max.fill", tint: StrandPalette.chargeColor)
-                mealRow("Abend", a.dinner, icon: "moon.stars.fill", tint: StrandPalette.restColor)
+                HStack {
+                    Text("Essen").strandOverline()
+                    Spacer()
+                    chevronHint("Kalorien-Tracker")
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("\(eatenToday)")
+                            .font(StrandFont.title2.monospacedDigit())
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        Text("/ \(a.kcalTarget) kcal")
+                            .font(StrandFont.subhead)
+                            .foregroundStyle(StrandPalette.textSecondary)
+                        Spacer()
+                        Text(eatenToday > a.kcalTarget ? "\(eatenToday - a.kcalTarget) drüber" : "noch \(a.kcalTarget - eatenToday)")
+                            .font(StrandFont.subhead.weight(.semibold))
+                            .foregroundStyle(eatenToday > a.kcalTarget ? StrandPalette.statusWarning : StrandPalette.chargeColor)
+                    }
+                    ProgressView(value: Double(min(eatenToday, a.kcalTarget)), total: Double(max(1, a.kcalTarget)))
+                        .tint(eatenToday > a.kcalTarget ? StrandPalette.statusWarning : StrandPalette.chargeColor)
+                    Text("Protein \(proteinToday) / \(a.proteinG) g · Fett ca. \(a.fatG) g")
+                        .font(StrandFont.caption)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                }
                 divider
-                HStack(spacing: 16) {
-                    metric("Kalorien", "\(a.kcalTarget)")
-                    metric("Protein", "\(a.proteinG) g")
-                    metric("Fett", "\(a.fatG) g")
+                mealRow("Frühstück", a.breakfast, icon: loggedSlots.contains(.breakfast) ? "checkmark" : "sunrise.fill", tint: StrandPalette.statusWarning)
+                mealRow("Mittag", a.lunch, icon: loggedSlots.contains(.lunch) ? "checkmark" : "sun.max.fill", tint: StrandPalette.chargeColor)
+                mealRow("Snack", a.snack, icon: loggedSlots.contains(.snack) ? "checkmark" : "cup.and.saucer.fill", tint: StrandPalette.effortColor)
+                mealRow("Abend", a.dinner, icon: loggedSlots.contains(.dinner) ? "checkmark" : "moon.stars.fill", tint: StrandPalette.restColor)
+                if let tdee = a.tdeeEstimate {
+                    Text("Dein Verbrauch ≈ \(tdee) kcal (aus Essen + Waage berechnet)")
+                        .font(StrandFont.caption)
+                        .foregroundStyle(StrandPalette.textSecondary)
                 }
                 Text(FitnessPlan.rules[2])
                     .font(StrandFont.caption)

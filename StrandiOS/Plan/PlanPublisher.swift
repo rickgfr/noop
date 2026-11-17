@@ -53,11 +53,13 @@ enum PlanPublisher {
         let weights = weightRows.map { WeightPoint(day: $0.day, kg: $0.value) }
         let fat = await repo.series(key: "body_fat", source: Repository.appleHealthSource, days: 42).last?.value
 
-        // Weekly calorie step (±150 kcal) from the weight trend.
+        // Weekly calorie target: from logged intake vs the scale trend when there is enough food data,
+        // otherwise the plan's ±150 kcal weight-only rule.
         let todayKey = FitnessPlan.dayKey(now)
-        let adjusted = PlanEngine.adjustBase(current: kcalBase, weights: weights,
-                                             lastAdjustDay: UserDefaults.standard.string(forKey: kcalAdjustDayKey),
-                                             todayKey: todayKey)
+        let intake = FoodLogStore.dailyTotals()
+        let adjusted = PlanEngine.adaptTarget(current: kcalBase, weights: weights, intake: intake,
+                                              lastAdjustDay: UserDefaults.standard.string(forKey: kcalAdjustDayKey),
+                                              todayKey: todayKey)
         if adjusted.kcal != kcalBase {
             UserDefaults.standard.set(adjusted.kcal, forKey: kcalBaseKey)
             UserDefaults.standard.set(todayKey, forKey: kcalAdjustDayKey)
@@ -71,6 +73,11 @@ enum PlanPublisher {
         var advice = PlanEngine.advice(for: now, inputs: inputs, now: now)
         if let r = adjusted.reason {
             advice.notes.insert(r, at: 0)
+        }
+        if let e = adjusted.estimate {
+            advice.tdeeEstimate = e.tdee
+            advice.intakeAvg = e.avgIntake
+            advice.loggedDays = e.loggedDays
         }
 
         let previous = PlanSnapshotStore.load()

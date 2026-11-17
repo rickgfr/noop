@@ -46,7 +46,7 @@ struct PlanWidgetView: View {
         if let a = entry.advice {
             switch family {
             case .accessoryRectangular: rectangular(a)
-            case .accessoryInline: Text(verbatim: "\(a.trainingTitle) · \(a.kcalTarget) kcal")
+            case .accessoryInline: Text(verbatim: "\(a.trainingTitle) · \(kcalLine(a))")
             case .systemMedium: medium(a)
             default: small(a)
             }
@@ -73,10 +73,18 @@ struct PlanWidgetView: View {
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(StrandPalette.textSecondary)
             Spacer(minLength: 0)
-            Text(verbatim: "\(a.kcalTarget) kcal")
+            Text(verbatim: kcalLine(a))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(StrandPalette.textTertiary)
         }
+    }
+
+    /// "noch 850 kcal" once something is logged today, otherwise the day's target.
+    private func kcalLine(_ a: PlanAdvice) -> String {
+        let eaten = FoodLogStore.total(day: FitnessPlan.dayKey(entry.date)).kcal
+        guard eaten > 0 else { return "\(a.kcalTarget) kcal" }
+        let left = a.kcalTarget - eaten
+        return left >= 0 ? "noch \(left)" : "+\(-left) kcal"
     }
 
     private func small(_ a: PlanAdvice) -> some View {
@@ -137,7 +145,7 @@ struct PlanWidgetView: View {
             Text(verbatim: "\(a.trainingTitle) · \(a.recovery.map { "\(Int($0.rounded()))%" } ?? "–")")
                 .font(.system(size: 12, weight: .bold))
             Text(verbatim: a.headline).font(.system(size: 11))
-            Text(verbatim: "\(a.kcalTarget) kcal · \(a.proteinG) g P").font(.system(size: 11))
+            Text(verbatim: "\(kcalLine(a)) · \(a.proteinG) g P").font(.system(size: 11))
         }
     }
 }

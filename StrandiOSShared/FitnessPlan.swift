@@ -88,6 +88,27 @@ public enum FitnessPlan {
         "Paprika (4), Zucchini, TK-Erbsen, grüne Bohnen, Tomaten, Salat, Beeren, Bananen", "Whey, Erdnussbutter, Parmesan",
     ]
 
+    /// Planned meals with rough macro estimates (editable when logged). Breakfast + snack are fixed;
+    /// lunch/dinner follow the weekday. Values: (kcal, protein g).
+    public static let breakfastMacros = (kcal: 445, protein: 36)
+    public static let snackMacros = (kcal: 225, protein: 27)
+    static let dayMacros: [Int: (lunch: (Int, Int), dinner: (Int, Int))] = [
+        2: ((525, 53), (515, 67)), 3: ((600, 45), (665, 68)), 4: ((600, 45), (635, 63)),
+        5: ((600, 50), (630, 58)), 6: ((600, 50), (590, 49)), 7: ((515, 36), (650, 64)),
+        1: ((575, 58), (640, 51)),
+    ]
+
+    public static func plannedMeals(for date: Date) -> [PlannedMeal] {
+        let d = day(for: date)
+        let m = dayMacros[d.weekday] ?? ((600, 45), (650, 55))
+        return [
+            PlannedMeal(slot: .breakfast, name: breakfast, kcal: breakfastMacros.kcal, protein: breakfastMacros.protein),
+            PlannedMeal(slot: .lunch, name: d.lunch, kcal: m.lunch.0, protein: m.lunch.1),
+            PlannedMeal(slot: .snack, name: snack, kcal: snackMacros.kcal, protein: snackMacros.protein),
+            PlannedMeal(slot: .dinner, name: d.dinner, kcal: m.dinner.0, protein: m.dinner.1),
+        ]
+    }
+
     public static func day(for date: Date, calendar: Calendar = Calendar(identifier: .gregorian)) -> PlanDay {
         let wd = calendar.component(.weekday, from: date)
         return week.first { $0.weekday == wd } ?? week[0]
@@ -99,6 +120,34 @@ public enum FitnessPlan {
         f.locale = Locale(identifier: "en_US_POSIX")
         return f.string(from: date)
     }
+}
+
+public enum MealSlot: String, Codable, CaseIterable, Sendable {
+    case breakfast, lunch, snack, dinner, other
+    public var label: String {
+        switch self {
+        case .breakfast: return "Frühstück"
+        case .lunch: return "Mittag"
+        case .snack: return "Snack"
+        case .dinner: return "Abend"
+        case .other: return "Sonstiges"
+        }
+    }
+}
+
+public struct PlannedMeal: Equatable, Sendable {
+    public let slot: MealSlot
+    public let name: String
+    public let kcal: Int
+    public let protein: Int
+}
+
+/// One logged day of eating: total kcal and how many entries made it up.
+public struct IntakeDay: Codable, Equatable, Sendable {
+    public let day: String
+    public let kcal: Int
+    public let protein: Int
+    public init(day: String, kcal: Int, protein: Int) { self.day = day; self.kcal = kcal; self.protein = protein }
 }
 
 /// Everything the engine reads, gathered by the app. All optional: a missing strap night or a missing
@@ -154,6 +203,18 @@ public struct PlanAdvice: Codable, Equatable, Sendable {
     public var weeklyChange: Double?
     public var toGoal: Double?
     public var generatedAt: Date
+    /// Adaptive energy model (nil until ~10 logged days with scale readings).
+    public var tdeeEstimate: Int? = nil
+    public var intakeAvg: Int? = nil
+    public var loggedDays: Int? = nil
+}
+
+/// Energy balance read from what was eaten and how the scale moved.
+public struct EnergyEstimate: Equatable, Sendable {
+    public let tdee: Int          // estimated maintenance kcal/day
+    public let avgIntake: Int     // mean kcal on logged days
+    public let loggedDays: Int
+    public let kgPerWeek: Double  // regression slope, negative = losing
 }
 
 public enum PlanEngine {
@@ -205,6 +266,72 @@ public enum PlanEngine {
             return (min(2600, current + 150), String(format: "%.1f kg/Woche verloren → +150 kcal", perWeek))
         }
         return (current, nil)
+    }
+
+    /// Target loss pace for the cut (kg per week) and the energy content of body mass change.
+    public static let targetLossKgPerWeek = 0.9
+    public static let kcalPerKg = 7700.0
+    public static let minKcal = 1700
+    public static let maxKcal = 2600
+    /// A day counts as logged only from this many kcal on (a half-logged day would fake a big deficit).
+    public static let minLoggedKcal = 1000
+
+    /// Maintenance estimate from the last 21 complete days: mean intake minus the energy the weight
+    /// trend says was stored/burned (linear regression over the scale readings, so single water-weight
+    /// spikes barely move it). Needs ≥10 logged days and ≥6 weigh-ins spanning ≥10 days.
+    public static func estimateEnergy(intake: [IntakeDay], weights: [WeightPoint], todayKey: String,
+                                      windowDays: Int = 21) -> EnergyEstimate? {
+        guard let today = parseDay(todayKey) else { return nil }
+        let day: TimeInterval = 86_400
+        let from = today.addingTimeInterval(-Double(windowDays) * day)
+        let logged = intake.filter { d in
+            guard let t = parseDay(d.day) else { return false }
+            return t >= from && t < today && d.kcal >= minLoggedKcal
+        }
+        guard logged.count >= 10 else { return nil }
+        let avgIntake = Double(logged.map { $0.kcal }.reduce(0, +)) / Double(logged.count)
+
+        let pts = weights.compactMap { p -> (Double, Double)? in
+            guard let t = parseDay(p.day), t >= from, t <= today else { return nil }
+            return (t.timeIntervalSince(from) / day, p.kg)
+        }
+        let xs = pts.map { $0.0 }
+        let ys = pts.map { $0.1 }
+        guard pts.count >= 6, let minX = xs.min(), let maxX = xs.max(), maxX - minX >= 10 else {
+            return nil
+        }
+        let n = Double(pts.count)
+        let mx = xs.reduce(0, +) / n
+        let my = ys.reduce(0, +) / n
+        let sxx = pts.map { ($0.0 - mx) * ($0.0 - mx) }.reduce(0, +)
+        guard sxx > 0 else { return nil }
+        let slopePerDay = pts.map { ($0.0 - mx) * ($0.1 - my) }.reduce(0, +) / sxx
+        let tdee = avgIntake - slopePerDay * kcalPerKg
+        guard tdee.isFinite, tdee > 1200, tdee < 5000 else { return nil }
+        return EnergyEstimate(tdee: Int(tdee.rounded()), avgIntake: Int(avgIntake.rounded()),
+                              loggedDays: logged.count, kgPerWeek: round1(slopePerDay * 7))
+    }
+
+    /// Weekly target update. With enough food logs: target = estimated maintenance − the deficit for
+    /// 0.9 kg/week, approached in steps of at most ±200 kcal. Without logs: the plan's ±150 kcal rule.
+    public static func adaptTarget(current: Int, weights: [WeightPoint], intake: [IntakeDay],
+                                   lastAdjustDay: String?, todayKey: String)
+        -> (kcal: Int, reason: String?, estimate: EnergyEstimate?) {
+        let estimate = estimateEnergy(intake: intake, weights: weights, todayKey: todayKey)
+        if let last = lastAdjustDay, let l = parseDay(last), let t = parseDay(todayKey),
+           t.timeIntervalSince(l) < 7 * 86_400 { return (current, nil, estimate) }
+        guard let e = estimate else {
+            let r = adjustBase(current: current, weights: weights, lastAdjustDay: nil, todayKey: todayKey)
+            return (r.kcal, r.reason, nil)
+        }
+        let deficit = targetLossKgPerWeek * kcalPerKg / 7
+        let ideal = min(maxKcal, max(minKcal, Int((Double(e.tdee) - deficit).rounded())))
+        let step = max(-200, min(200, ideal - current))
+        let next = Int((Double(current + step) / 25).rounded()) * 25
+        guard abs(next - current) >= 50 else { return (current, nil, e) }
+        let reason = String(format: "Verbrauch ≈ %d kcal (Ø %d gegessen, %+.1f kg/Woche) → Ziel %d kcal",
+                            e.tdee, e.avgIntake, e.kgPerWeek, next)
+        return (next, reason, e)
     }
 
     public static func advice(for date: Date, inputs: PlanInputs, now: Date = Date()) -> PlanAdvice {
